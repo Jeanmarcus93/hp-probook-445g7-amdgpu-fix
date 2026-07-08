@@ -1,0 +1,65 @@
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_bios.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_bios.c
+@@ -33,6 +33,7 @@
+ #include <linux/pci.h>
+ #include <linux/slab.h>
+ #include <linux/acpi.h>
++#include <linux/firmware.h>
+ /*
+  * BIOS.
+  */
+@@ -434,8 +435,48 @@
+ }
+ #endif
+ 
++static bool amdgpu_read_bios_from_file(struct amdgpu_device *adev)
++{
++	const struct firmware *fw;
++	uint8_t *bios;
++	int ret;
++
++	ret = request_firmware(&fw, "amdgpu/vbios.bin", adev->dev);
++	if (ret) {
++		dev_dbg(adev->dev, "VBIOS file not available (%d)\n", ret);
++		return false;
++	}
++
++	bios = kmemdup(fw->data, fw->size, GFP_KERNEL);
++	if (!bios) {
++		release_firmware(fw);
++		return false;
++	}
++
++	kfree(adev->bios);
++	adev->bios = bios;
++	adev->bios_size = fw->size;
++
++	if (!check_atom_bios(adev, fw->size)) {
++		dev_warn(adev->dev, "VBIOS from file failed signature check\n");
++		kfree(adev->bios);
++		adev->bios = NULL;
++		adev->bios_size = 0;
++		release_firmware(fw);
++		return false;
++	}
++
++	release_firmware(fw);
++	dev_info(adev->dev, "Fetched VBIOS from file (amdgpu/vbios.bin)\n");
++	return true;
++}
++
+ static bool amdgpu_get_bios_apu(struct amdgpu_device *adev)
+ {
++	if (amdgpu_read_bios_from_file(adev)) {
++		goto success;
++	}
++
+ 	if (amdgpu_acpi_vfct_bios(adev)) {
+ 		dev_info(adev->dev, "Fetched VBIOS from VFCT\n");
+ 		goto success;
+@@ -589,3 +630,5 @@
+ 
+ 	return true;
+ }
++
++MODULE_FIRMWARE("amdgpu/vbios.bin");
