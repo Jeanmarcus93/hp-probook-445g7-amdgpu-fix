@@ -1,0 +1,12 @@
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_trace.h
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_trace.h
+@@ -583,5 +583,8 @@
+ 
+ /* This part must be outside protection */
+ #undef TRACE_INCLUDE_PATH
+-#define TRACE_INCLUDE_PATH ../../drivers/gpu/drm/amd/amdgpu
++/* DKMS out-of-tree: usar caminho relativo ao proprio dir do modulo (resolvido
++ * via -I$(src) do Kbuild), igual ao amdgpu_dm_trace.h. O caminho in-tree
++ * ../../drivers/gpu/drm/amd/amdgpu so existe ao compilar dentro da arvore. */
++#define TRACE_INCLUDE_PATH .
+ #include <trace/define_trace.h>

@@ -143,37 +143,59 @@ Ubuntu 26.04 uses **dracut**, not mkinitramfs.
 
 ---
 
-## Installation
+## Installation — quick start
 
-All steps as root:
+**Precondition:** boot with the GPU already POSTed and the `amdgpu` module *not*
+driving the display (the broken state qualifies: simpledrm active, or recovery /
+`nomodeset` boot). The ROM BAR is only readable after POST.
 
-1. Dump the real VBIOS: `sudo bash scripts/dump_vbios_rom.sh`
-2. Install the VBIOS: `sudo bash scripts/install_vbios.sh`
-3. Build and install the DKMS module (see [DKMS section](#dkms)).
-4. Make it permanent: `sudo bash scripts/make_amdgpu_permanent.sh`
-5. Reboot via the normal boot entry.
+```bash
+sudo apt install dkms patch flex bison libelf-dev linux-headers-$(uname -r)
+git clone https://github.com/Jeanmarcus93/hp-probook-445g7-amdgpu-fix.git
+cd hp-probook-445g7-amdgpu-fix
+sudo bash install.sh
+# reboot via the normal GRUB entry
+```
+
+`install.sh` runs the four steps in order:
+
+1. **`scripts/dump_vbios_rom.sh`** — auto-detects the AMD GPU on the PCI bus,
+   enables the ROM BAR, dumps the real VBIOS and validates it (0x55AA signature,
+   mod-256 checksum, `ATOMBIOSBK` marker).
+2. **`scripts/install_vbios.sh`** — installs the dump as
+   `/lib/firmware/amdgpu/vbios.bin` (with backup of any previous file).
+3. **`scripts/build_dkms.sh`** — downloads the matching `linux-source` package,
+   extracts only `drivers/gpu/drm/amd/` (the subtree is self-contained:
+   `FULL_AMD_PATH=$(src)/..`), applies the patches from `patches/`, installs the
+   tree in `/usr/src/amdgpu-rombar-<version>/` and runs
+   `dkms add/build/install`.
+4. **`scripts/make_amdgpu_permanent.sh`** — dracut early-load conf
+   (`add_drivers+=" amdgpu "`) + initramfs regeneration + sanity checks.
+
+Each script can also be run individually; all take optional arguments
+(PCI BDF, dump path, kernel version) and default to auto-detection.
+
+**Optional no-reboot test with auto-recovery:** `sudo bash scripts/test_amdgpu_real.sh`
+loads the module manually and, if the panel doesn't light up in 90 s, reboots
+back to simpledrm on its own.
 
 ---
 
 ## DKMS
 
-The `dkms/` directory contains the `dkms.conf` and `Makefile` for building the
-patched `amdgpu.ko` as an external module. The module source (the full `amd/`
-subtree from the kernel tree, with the two patches applied) must be placed under
-`/usr/src/amdgpu-rombar-7.0.0/`.
+The module is packaged as `amdgpu-rombar` with `AUTOINSTALL="yes"`: every new
+kernel installed via apt triggers an automatic rebuild against that kernel's
+headers — no `apt-mark hold` needed, no manual rebuild.
 
-```bash
-# After placing the patched source in /usr/src/amdgpu-rombar-7.0.0/
-sudo dkms add amdgpu-rombar/7.0.0
-sudo dkms build amdgpu-rombar/7.0.0
-sudo dkms install amdgpu-rombar/7.0.0
-```
+The build is **EXTMOD against the headers package** of the target kernel, so
+modversions CRCs, autoconf (`CONFIG_DEBUG_INFO_BTF_MODULES`) and the
+`struct module` layout come out right automatically (see
+[Build notes](#build-notes-lessons-learned) for why that matters).
 
-`AUTOINSTALL="yes"` in `dkms.conf` means the module is rebuilt automatically
-for each new kernel installed via apt.
-
-> **Note:** the DKMS module was signed with a MOK key for Secure Boot.
-> If you have Secure Boot enabled, enroll a MOK key and sign the module.
+> **Secure Boot:** Ubuntu's dkms signs modules automatically with the MOK key in
+> `/var/lib/shim-signed/mok/` if one is enrolled. With Secure Boot enabled and
+> no enrolled MOK, the module will not load — enroll one first
+> (`sudo update-secureboot-policy --new-key` + `mokutil --import`).
 
 ---
 
@@ -184,12 +206,16 @@ The `patches/` directory contains unified diffs against the vanilla
 
 - `0001-amdgpu-bios-add-file-load-vbios.patch` — VBIOS file-load in `amdgpu_bios.c`
 - `0002-link-factory-fix-hpd-underflow.patch` — HPD underflow fix in `link_factory.c`
+- `0003-amdgpu-trace-fix-out-of-tree-include-path.patch` — `TRACE_INCLUDE_PATH .`
+  in `amdgpu_trace.h`. **Only needed for the out-of-tree/DKMS build** (the
+  in-tree relative path `../../drivers/gpu/drm/amd/amdgpu` doesn't exist when
+  building as an external module). Skip it if you're patching a full kernel tree.
 
-Apply with:
-```bash
-patch -p1 < patches/0001-amdgpu-bios-add-file-load-vbios.patch
-patch -p1 < patches/0002-link-factory-fix-hpd-underflow.patch
-```
+Apply to a full kernel tree with `patch -p1`, or to the extracted `amd/`
+subtree with `patch -p4` (which is what `build_dkms.sh` does).
+
+The reconstructed tree (vanilla source + these patches) was verified
+**byte-identical** to the DKMS tree running on the reference machine.
 
 ---
 
@@ -227,13 +253,13 @@ The `Fetched VBIOS from file` timestamp at ~8.5 s confirms the load happens
 1. In GRUB (hold Shift/Esc), choose **Advanced options → recovery**
    (`nomodeset`): `amdgpu` won't probe and simpledrm restores video.
 
-2. Restore the stock module:
+2. Remove the DKMS module (the stock module in
+   `/lib/modules/.../kernel/...` takes over again):
    ```bash
-   sudo cp /lib/modules/7.0.0-27-generic/kernel/drivers/gpu/drm/amd/amdgpu/amdgpu.ko.zst.orig.bak \
-           /lib/modules/7.0.0-27-generic/kernel/drivers/gpu/drm/amd/amdgpu/amdgpu.ko.zst
+   sudo dkms remove amdgpu-rombar/$(uname -r | cut -d- -f1) --all
    sudo rm -f /etc/dracut.conf.d/amdgpu.conf
-   sudo depmod -a 7.0.0-27-generic
-   sudo update-initramfs -u -k 7.0.0-27-generic
+   sudo depmod -a
+   sudo update-initramfs -u -k "$(uname -r)"
    ```
 
 3. Reboot.

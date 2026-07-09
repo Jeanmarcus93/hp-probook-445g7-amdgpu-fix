@@ -1,43 +1,51 @@
 #!/bin/bash
 # Torna permanente o fix do amdgpu (HP ProBook 445 G7 / AMD Renoir).
-# Pre-condicao: amdgpu ja sobe limpo via `sudo modprobe amdgpu` com
-# /lib/firmware/amdgpu/vbios.bin = VBIOS real da ROM BAR (sha256 e40fd9a8...).
-# Roda como root: sudo ~/make_amdgpu_permanent.sh
+# Pre-condicoes: vbios.bin real instalado (install_vbios.sh) e modulo DKMS
+# construido (build_dkms.sh).
+# Uso: sudo bash make_amdgpu_permanent.sh [kernelver]
 set -euo pipefail
 
-KVER=7.0.0-27-generic
+KVER="${1:-$(uname -r)}"
 VBIOS=/lib/firmware/amdgpu/vbios.bin
-EXPECT_SHA=e40fd9a8f8a244d3dbea3c7e9834032740a2c0d71000aa1d81d61989cf95425a
 
 if [ "$(id -u)" -ne 0 ]; then echo "Rode como root (sudo)."; exit 1; fi
 
-echo "== 1/5 validar VBIOS real instalado =="
-if [ ! -f "$VBIOS" ]; then echo "FALTA $VBIOS"; exit 1; fi
-GOT_SHA=$(sha256sum "$VBIOS" | awk '{print $1}')
-if [ "$GOT_SHA" != "$EXPECT_SHA" ]; then
-  echo "AVISO: sha do vbios.bin ($GOT_SHA) != esperado ($EXPECT_SHA)."
-  echo "       Esperado = VBIOS real da ROM BAR. Abortando por seguranca."
-  exit 1
-fi
-echo "  OK ($GOT_SHA)"
+echo "== 1/5 validar VBIOS instalado =="
+[ -f "$VBIOS" ] || { echo "FALTA $VBIOS (rode install_vbios.sh)"; exit 1; }
+python3 - "$VBIOS" <<'PY'
+import sys
+d=open(sys.argv[1],'rb').read()
+decl=d[2]*512
+assert d[:2]==b'\x55\xaa', "assinatura invalida"
+assert (sum(d[:decl])&0xff)==0, "checksum invalido"
+assert b'ATOMBIOSBK' in d, "sem ATOMBIOSBK"
+print("  OK: 55aa + checksum 0 + ATOMBIOSBK")
+PY
+echo "  sha256: $(sha256sum "$VBIOS" | cut -d' ' -f1)"
 
-echo "== 2/5 remover blacklist do amdgpu (deixa udev autocarregar) =="
+echo "== 2/5 validar modulo patcheado =="
+MODPATH=$(modinfo -F filename amdgpu -k "$KVER" 2>/dev/null || true)
+case "$MODPATH" in
+  */updates/dkms/*) echo "  OK: modulo DKMS ativo ($MODPATH)";;
+  *) echo "  AVISO: modulo amdgpu nao vem de updates/dkms ($MODPATH)."
+     echo "         Rode build_dkms.sh antes, ou confira 'dkms status'.";;
+esac
+
+echo "== 3/5 remover blacklist do amdgpu (deixa udev autocarregar) =="
 rm -fv /etc/modprobe.d/blacklist-amdgpu-test.conf
 
-echo "== 3/5 reabilitar force-add do amdgpu no initramfs (dracut) =="
+echo "== 4/5 habilitar force-add do amdgpu no initramfs (dracut) =="
 if [ -f /etc/dracut.conf.d/amdgpu.conf.disabled ]; then
   mv -v /etc/dracut.conf.d/amdgpu.conf.disabled /etc/dracut.conf.d/amdgpu.conf
 elif [ -f /etc/dracut.conf.d/amdgpu.conf ]; then
   echo "  ja habilitado"
 else
   echo 'add_drivers+=" amdgpu "' > /etc/dracut.conf.d/amdgpu.conf
-  echo "  recriado /etc/dracut.conf.d/amdgpu.conf"
+  echo "  criado /etc/dracut.conf.d/amdgpu.conf"
 fi
 
-echo "== 4/5 regenerar initramfs ($KVER) =="
+echo "== 5/5 regenerar initramfs ($KVER) e conferir conteudo =="
 update-initramfs -u -k "$KVER"
-
-echo "== 5/5 conferir amdgpu.ko + vbios.bin no initramfs =="
 if command -v lsinitrd >/dev/null 2>&1; then
   lsinitrd /boot/initrd.img-"$KVER" 2>/dev/null | grep -Ei 'amdgpu\.ko|amdgpu/vbios\.bin' || \
     echo "  AVISO: nao encontrei amdgpu.ko/vbios.bin no initramfs (verifique)"
@@ -46,15 +54,14 @@ fi
 cat <<'EOF'
 
 PRONTO. Agora REINICIE pela entrada NORMAL do GRUB.
-Esperado: painel acende direto em 1920x1080, card = amdgpu (sem flash p/ simpledrm).
+Esperado: painel acende direto na resolucao nativa, card = amdgpu.
 
-Rede de seguranca: a entrada GRUB de recovery (nomodeset) ainda da simpledrm.
+Rede de seguranca: recovery (nomodeset) no GRUB ainda da simpledrm.
 REVERTER este fix:
   printf 'blacklist amdgpu\n' > /etc/modprobe.d/blacklist-amdgpu-test.conf
   mv /etc/dracut.conf.d/amdgpu.conf /etc/dracut.conf.d/amdgpu.conf.disabled
-  update-initramfs -u -k 7.0.0-27-generic
+  update-initramfs -u -k $(uname -r)
 
-IMPORTANTE (sobreviver a updates de kernel): o amdgpu.ko e autocompilado para
-7.0.0-27-generic. Um upgrade de kernel reverte o fix. Para segurar:
-  apt-mark hold linux-image-7.0.0-27-generic
+Como o modulo e DKMS (AUTOINSTALL=yes), updates de kernel via apt
+reconstroem o modulo sozinhos — nao precisa de apt-mark hold.
 EOF

@@ -1,7 +1,7 @@
 #!/bin/bash
-# TESTE DECISIVO — carregar amdgpu com o VBIOS REAL (ROM BAR, e40fd9a8).
+# TESTE DECISIVO — carregar amdgpu com o VBIOS REAL (ROM BAR).
 # Auto-recupera: se o painel NAO acender em ~90s, reinicia sozinho -> volta ao simpledrm.
-# Rodar como root:  sudo ~/test_amdgpu_real.sh
+# Rodar como root:  sudo bash test_amdgpu_real.sh
 set -u
 
 LOG=/var/log/amdgpu-realvbios-$(date +%Y%m%d-%H%M%S).txt
@@ -51,7 +51,7 @@ if [ "$OK" = 1 ]; then
   echo " SUCESSO: amdgpu + eDP connected. Painel deve estar ACESO." | tee -a "$LOG"
   echo " Watchdog cancelado. NAO vai reiniciar." | tee -a "$LOG"
   echo " Para tornar definitivo (boot normal):" | tee -a "$LOG"
-  echo "   sudo ~/scratchpad/safe_normal_boot.sh   (rodar o REVERT dentro dele)" | tee -a "$LOG"
+  echo "   sudo bash make_amdgpu_permanent.sh" | tee -a "$LOG"
   echo "============================================" | tee -a "$LOG"
   kill "$DW" 2>/dev/null            # para a captura continua, libera o script
   exit 0
