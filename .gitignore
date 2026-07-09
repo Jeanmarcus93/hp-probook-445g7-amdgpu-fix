@@ -7,3 +7,13 @@
 *.bin
 *.deb
 .tmp_versions/
+__pycache__/
+# artefatos de build/patch
+*.orig
+*.rej
+# dumps locais (vbios.bin e copiado para /lib/firmware de qualquer forma)
+vbios_rombar.bin
+# temporarios de build DKMS
+dkms_amdgpu_tmp/
+# logs de teste
+/var/

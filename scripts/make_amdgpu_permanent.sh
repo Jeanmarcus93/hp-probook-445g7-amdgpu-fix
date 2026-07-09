@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Torna permanente o fix do amdgpu (HP ProBook 445 G7 / AMD Renoir).
 # Pre-condicoes: vbios.bin real instalado (install_vbios.sh) e modulo DKMS
 # construido (build_dkms.sh).
@@ -7,12 +7,20 @@ set -euo pipefail
 
 KVER="${1:-$(uname -r)}"
 VBIOS=/lib/firmware/amdgpu/vbios.bin
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VALIDATE="$SCRIPT_DIR/validate_vbios.py"
 
 if [ "$(id -u)" -ne 0 ]; then echo "Rode como root (sudo)."; exit 1; fi
 
 echo "== 1/5 validar VBIOS instalado =="
 [ -f "$VBIOS" ] || { echo "FALTA $VBIOS (rode install_vbios.sh)"; exit 1; }
-python3 - "$VBIOS" <<'PY'
+if [ -f "$VALIDATE" ]; then
+  python3 "$VALIDATE" "$VBIOS" --require-edp || {
+    echo "ERRO: validacao do VBIOS falhou (veja acima)."
+    exit 1
+  }
+else
+  python3 - "$VBIOS" <<'PY'
 import sys
 d=open(sys.argv[1],'rb').read()
 decl=d[2]*512
@@ -21,6 +29,7 @@ assert (sum(d[:decl])&0xff)==0, "checksum invalido"
 assert b'ATOMBIOSBK' in d, "sem ATOMBIOSBK"
 print("  OK: 55aa + checksum 0 + ATOMBIOSBK")
 PY
+fi
 echo "  sha256: $(sha256sum "$VBIOS" | cut -d' ' -f1)"
 
 echo "== 2/5 validar modulo patcheado =="

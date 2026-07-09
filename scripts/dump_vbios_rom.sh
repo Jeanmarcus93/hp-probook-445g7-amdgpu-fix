@@ -34,7 +34,9 @@ echo "==> GPU: $GPU"
 echo "==> Habilitando ROM BAR e fazendo dump..."
 echo 1 > "$ROM"
 # le tudo; usa cat pois o tamanho efetivo pode diferir do BAR
-cat "$ROM" > "$OUT" 2>/dev/null || true
+if ! cat "$ROM" > "$OUT" 2>/dev/null; then
+  echo "AVISO: cat reportou erro (pode ser normal — verificando tamanho)"
+fi
 echo 0 > "$ROM"
 [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER:$SUDO_USER" "$OUT" 2>/dev/null || true
 
@@ -49,15 +51,23 @@ echo "==> Dump salvo: $OUT ($SZ bytes)"
 
 echo
 echo "==> Validacao da imagem dumpada:"
-# 1) assinatura de ROM 0x55AA nos 2 primeiros bytes
-SIG=$(xxd -p -l 2 "$OUT")
-echo "    - assinatura inicial (esperado 55aa): $SIG"
-# 2) string ATOM / "ATOMBIOSBK" em algum offset
-echo -n "    - contem 'ATOM'           : "; grep -aqc "ATOM" "$OUT" && echo "SIM" || echo "NAO"
-echo -n "    - contem 'ATOMBIOSBK-AMD' : "; grep -aq "ATOMBIOSBK" "$OUT" && echo "SIM" || echo "NAO"
-# 3) string do build/part number da BIOS (ajuda a confirmar o modelo)
-echo "    - strings de BIOS (amostra):"
-strings -n 8 "$OUT" | grep -iE "renoir|navi|D[0-9]{3}|xxx|BK-AMD|113-" | head -8 | sed 's/^/        /'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VALIDATE="$SCRIPT_DIR/validate_vbios.py"
+if [ -f "$VALIDATE" ]; then
+  python3 "$VALIDATE" "$OUT" || {
+    echo "ERRO: validacao do VBIOS falhou (veja acima)."
+    echo "      Refaca o dump com a GPU POSTada (boot com simpledrm/nomodeset)."
+    exit 1
+  }
+else
+  # fallback manual se validate_vbios.py nao existir
+  SIG=$(xxd -p -l 2 "$OUT")
+  echo "    - assinatura inicial (esperado 55aa): $SIG"
+  echo -n "    - contem 'ATOM'           : "; grep -aqc "ATOM" "$OUT" && echo "SIM" || echo "NAO"
+  echo -n "    - contem 'ATOMBIOSBK-AMD' : "; grep -aq "ATOMBIOSBK" "$OUT" && echo "SIM" || echo "NAO"
+  echo "    - strings de BIOS (amostra):"
+  strings -n 8 "$OUT" | grep -iE "renoir|navi|D[0-9]{3}|xxx|BK-AMD|113-" | head -8 | sed 's/^/        /'
+fi
 
 echo
 if [ -f "$CUR" ]; then

@@ -43,10 +43,12 @@ echo "  OK (headers $KVER + dkms/patch/flex/bison/libelf-dev)"
 
 echo "== 2/6 obter source do kernel (linux-source-$KBASE) =="
 TARBALL=""
-# ja instalado?
+# ja instalado? (shopt -s nullglob evita que o glob literal entre no loop)
+shopt -s nullglob
 for f in /usr/src/linux-source-$KBASE/linux-source-$KBASE.tar.*; do
-  [ -f "$f" ] && TARBALL="$f" && break
+  TARBALL="$f" && break
 done
+shopt -u nullglob
 if [ -z "$TARBALL" ]; then
   echo "  baixando o pacote linux-source-$KBASE (~200 MB, so desta vez)..."
   (cd "$WORK" && apt-get download "linux-source-$KBASE")

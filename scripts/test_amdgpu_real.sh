@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # TESTE DECISIVO — carregar amdgpu com o VBIOS REAL (ROM BAR).
 # Auto-recupera: se o painel NAO acender em ~90s, reinicia sozinho -> volta ao simpledrm.
 # Rodar como root:  sudo bash test_amdgpu_real.sh
